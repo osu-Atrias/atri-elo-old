@@ -3,38 +3,32 @@ use rayon::{
     iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
-use tracing::warn;
 
 /// A struct representing a past contest event.
 #[derive(Debug, Clone)]
-pub struct PlayerEvent {
-    contest_name: String,
+pub struct PlayerHistoryEntry {
+    contest_id: i64,
     perf: f64,
     rating: f64,
-    contest_place: usize,
-    rating_place: usize,
+    contest_rank: usize,
+    rating_rank: usize,
 }
 
-impl PlayerEvent {
-    fn new(
-        contest_name: String,
+impl PlayerHistoryEntry {
+    pub fn new(
+        contest_id: i64,
         perf: f64,
         rating: f64,
-        contest_place: usize,
-        rating_place: usize,
+        contest_rank: usize,
+        rating_rank: usize,
     ) -> Self {
         Self {
-            contest_name,
+            contest_id,
             perf,
             rating,
-            contest_place,
-            rating_place,
+            contest_rank,
+            rating_rank,
         }
-    }
-
-    /// Get a reference to the player event's contest name.
-    pub fn contest_name(&self) -> &str {
-        self.contest_name.as_ref()
     }
 
     /// Get a reference to the player event's perf.
@@ -47,14 +41,19 @@ impl PlayerEvent {
         self.rating
     }
 
-    /// Get a reference to the player event's contest place.
-    pub fn contest_place(&self) -> usize {
-        self.contest_place
+    /// Get a reference to the player event's contest rank.
+    pub fn contest_rank(&self) -> usize {
+        self.contest_rank
     }
 
-    /// Get a reference to the player event's rating place.
-    pub fn rating_place(&self) -> usize {
-        self.rating_place
+    /// Get a reference to the player event's rating rank,
+    pub fn rating_rank(&self) -> usize {
+        self.rating_rank
+    }
+
+    /// Get a reference to the player history entry's contest id.
+    pub fn contest_id(&self) -> i64 {
+        self.contest_id
     }
 }
 
@@ -68,7 +67,7 @@ struct Player {
     perfs: Vec<f64>,
     weights: Vec<f64>,
 
-    history: Vec<PlayerEvent>,
+    history: Vec<PlayerHistoryEntry>,
 }
 
 impl Player {
@@ -80,7 +79,7 @@ impl Player {
             delta: 0.0,
             perfs: vec![mu],
             weights: vec![sigma.powi(-2)],
-            history: vec![PlayerEvent::new("-".to_string(), mu, mu, 0, 0)],
+            history: vec![PlayerHistoryEntry::new(-1, mu, mu, 0, 0)],
         }
     }
 
@@ -133,19 +132,20 @@ impl Player {
 
 /// A wrapper of contest results.
 #[derive(Debug, Clone)]
-pub struct Contest {
-    name: String,
-    standings: Vec<(String, i64)>,
+pub struct ContestDetailEntry {
+    data: Vec<(i64, i64, f64, f64, usize)>,
 }
 
-impl Contest {
-    /// Construct a new contest.
-    /// 
-    /// The first element of standings is a player's identifier.
-    /// 
-    /// The second element is the score (higher is better).
-    pub fn new(name: String, standings: Vec<(String, i64)>) -> Self {
-        Self { name, standings }
+impl ContestDetailEntry {
+    fn new(data: Vec<(i64, i64, f64, f64, usize)>) -> Self {
+        Self { data }
+    }
+
+    /// Get a reference to the contest history entry's data.
+    ///
+    /// Returned data followed (id, score, perf, rating, rating_rank) order.
+    pub fn data(&self) -> &[(i64, i64, f64, f64, usize)] {
+        self.data.as_ref()
     }
 }
 
@@ -158,7 +158,8 @@ pub struct EloMmr {
     mu_init: f64,
     sigma_init: f64,
 
-    players: DashMap<String, Player>,
+    players: DashMap<i64, Player>,
+    contest_details: DashMap<i64, ContestDetailEntry>,
 }
 
 impl Default for EloMmr {
@@ -169,7 +170,7 @@ impl Default for EloMmr {
 
 impl EloMmr {
     /// Construct a new system.
-    /// 
+    ///
     /// Default::default() gives a preset of superparameters (ρ = 1, β = 200, γ = 80, μ_init = 1500, σ_init = 350).
     pub fn new(rho: f64, beta: f64, gamma: f64, mu_init: f64, sigma_init: f64) -> EloMmr {
         EloMmr {
@@ -179,25 +180,35 @@ impl EloMmr {
             mu_init,
             sigma_init,
             players: DashMap::new(),
+            contest_details: DashMap::new(),
         }
     }
 
     /// Update ratings according to the result of the provided contest.
-    pub fn update(&self, contest: &mut Contest) {
-        // Every line of codes after this assumes that contest.standings is not empty.
-        if contest.standings.is_empty() {
-            return;
+    ///
+    /// If contest scores are empty, this function will do nothing.
+    ///
+    /// Return the lastest ratings of players.
+    pub fn update(
+        &mut self,
+        contest_id: i64,
+        mut contest_scores: Vec<(i64, i64)>,
+    ) -> Vec<(i64, f64)> {
+        if contest_scores.is_empty() {
+            return Vec::new();
         }
 
-        let standings = calc_standings(&mut contest.standings);
+        // Calculate standings for internal use.
+        let standings = calc_standings(&mut contest_scores);
 
+        // Calculate new ratings.
         let mut player_datas = Vec::with_capacity(standings.len());
         standings
             .par_iter()
             .map(|(id, _, _)| {
                 let mut player = self
                     .players
-                    .entry(id.clone())
+                    .entry(*id)
                     .or_insert_with(|| Player::new(self.mu_init, self.sigma_init));
                 player.diffuse(self.rho, self.gamma);
                 player.mu_pi = player.mu;
@@ -209,8 +220,8 @@ impl EloMmr {
         standings.par_iter().for_each(|(id, lo, hi)| {
             let mut player = self.players.get_mut(id).unwrap();
             player.update(self.beta, &player_datas, (*lo, *hi));
-            let new_history = PlayerEvent::new(
-                contest.name.clone(),
+            let new_history = PlayerHistoryEntry::new(
+                contest_id,
                 *player.perfs.last().unwrap(),
                 player.mu,
                 *lo,
@@ -219,8 +230,8 @@ impl EloMmr {
             player.history.push(new_history);
         });
 
-        // Rank players according to new ratings.
-        let mut new_ratings = self.export_ratings();
+        // Rank players according to new ratings and update players' history.
+        let mut new_ratings = self.export_player_ratings();
         new_ratings.par_sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap().reverse());
         let mut rank_app = 0;
         let mut rank_int = 0;
@@ -231,46 +242,74 @@ impl EloMmr {
             }
             let mut player = self.players.get_mut(id).unwrap();
             let last_event = player.history.last_mut().unwrap();
-            if last_event.rating_place == 0 {
-                last_event.rating_place = rank_app;
+            if last_event.rating_rank == 0 {
+                last_event.rating_rank = rank_app;
             }
         }
+
+        // Push contest history.
+        let mut data = Vec::new();
+        for i in 0..standings.len() {
+            let player = self.players.get(&standings[i].0).unwrap();
+            data.push((
+                standings[i].0,
+                contest_scores[i].1,
+                *player.perfs.last().unwrap(),
+                player.mu,
+                player.history.last().unwrap().rating_rank,
+            ));
+        }
+        self.contest_details
+            .insert(contest_id, ContestDetailEntry::new(data));
+
+        new_ratings
     }
 
     /// Export all players' rating.
-    /// 
+    ///
     /// The returned String is the id of the player.
-    pub fn export_ratings(&self) -> Vec<(String, f64)> {
+    pub fn export_player_ratings(&self) -> Vec<(i64, f64)> {
         self.players
             .par_iter()
-            .map(|player| (player.key().clone(), player.mu))
+            .map(|player| (*player.key(), player.mu))
             .collect()
     }
 
     /// Export all players' history.
-    /// 
+    ///
     /// The returned String is the id of the player.
-    pub fn export_history(&self) -> Vec<(String, Vec<PlayerEvent>)> {
+    pub fn export_player_history(&self) -> Vec<(i64, Vec<PlayerHistoryEntry>)> {
         self.players
             .par_iter()
-            .map(|player| (player.key().clone(), player.history.clone()))
+            .map(|player| (*player.key(), player.history.clone()))
             .collect()
     }
 
     /// Export a player's history.
-    pub fn export_history_of(&self, id: &str) -> Option<Vec<PlayerEvent>> {
+    pub fn export_player_history_of(&self, id: &i64) -> Option<Vec<PlayerHistoryEntry>> {
         self.players.get(id).map(|player| player.history.clone())
+    }
+
+    /// Export all contests' history.
+    pub fn export_contest_details(&self) -> Vec<(i64, ContestDetailEntry)> {
+        self.contest_details
+            .par_iter()
+            .map(|v| (*v.key(), v.clone()))
+            .collect()
+    }
+
+    /// Export a contest's history.
+    pub fn export_contest_detail_of(&self, id: &i64) -> Option<ContestDetailEntry> {
+        self.contest_details.get(id).map(|v| v.clone())
     }
 }
 
 /// Solve f(x) = 0 where x belongs to [a, b].
-/// 
+///
 /// May return inaccurate solutions if y_a * y_b > 0.
 fn solve_itp((mut a, mut b): (f64, f64), mut f: impl FnMut(f64) -> f64) -> f64 {
     const EPSILON: f64 = 1e-10;
     const N_0: usize = 1;
-
-    debug_assert!(a < b);
 
     let mut y_a = f(a);
     let mut y_b = f(b);
@@ -322,20 +361,20 @@ fn solve_itp((mut a, mut b): (f64, f64), mut f: impl FnMut(f64) -> f64) -> f64 {
 }
 
 /// Calc (lo, hi) standing data used in EloMMR.
-/// 
+///
 /// Assume that raw is **not** empty.
-fn calc_standings(raw: &mut Vec<(String, i64)>) -> Vec<(String, usize, usize)> {
+fn calc_standings(raw: &mut Vec<(i64, i64)>) -> Vec<(i64, usize, usize)> {
     raw.par_sort_unstable_by_key(|v| -v.1);
-    let mut standings: Vec<(String, usize, usize)> = Vec::new();
+    let mut standings = Vec::new();
     let mut rank_app = 1;
     let mut rank_int = 1;
-    standings.push((raw[0].0.to_owned(), 1, 0));
+    standings.push((raw[0].0, 1, 0));
     for (i, (id, score)) in raw.iter().enumerate().skip(1) {
         rank_int += 1;
         if *score != raw[i - 1].1 {
             rank_app = rank_int;
         }
-        standings.push((id.to_owned(), rank_app, 0));
+        standings.push((*id, rank_app, 0));
     }
     standings.last_mut().unwrap().2 = rank_app;
     for (i, (_, score)) in raw.iter().enumerate().rev().skip(1) {
