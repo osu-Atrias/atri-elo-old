@@ -9,4 +9,3 @@ edition = "2021"
 rayon = "1"
 dashmap = { version = "4", features = ["rayon"] }
 itertools = "0.10"
-tracing = "0.1"

@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 atri-elo-common = { path = "../atri-elo-common" }
-axum = "0.4.1"
+axum = "0.4"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }

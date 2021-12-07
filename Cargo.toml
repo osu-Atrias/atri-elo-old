@@ -1,2 +1,2 @@
 [workspace]
-members = ["atri-elo-common", "atri-elo-frontend", "atri-elo-backend", "atri-elo-mplink"]
+members = ["atri-elo-common", "atri-elo-frontend", "atri-elo-backend"]
