@@ -3,11 +3,12 @@ use rayon::{
     iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
+use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 mod test;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Player {
     mu: f64,
     mu_pi: f64,
@@ -44,7 +45,12 @@ impl Player {
         self.sigma /= kappa.sqrt();
     }
 
-    fn update(&mut self, beta: f64, player_data: &[(f64, f64)], (lo, hi): (usize, usize)) {
+    fn update(
+        &mut self,
+        beta: f64,
+        player_data: &[(f64, f64)],
+        (lo, hi): (usize, usize),
+    ) -> (f64, f64) {
         // COEFF = PI / sqrt(3)
         const COEFF: f64 = 1.8137993642342178;
         const SOLVE_BOUND: (f64, f64) = (-10000.0, 10000.0);
@@ -60,7 +66,9 @@ impl Player {
             result
         };
 
-        self.perfs.push(solve_itp(SOLVE_BOUND, f));
+        let perf = solve_itp(SOLVE_BOUND, f);
+
+        self.perfs.push(perf);
         self.weights.push(beta.powi(-2));
 
         let f = |x: f64| {
@@ -74,11 +82,13 @@ impl Player {
         };
 
         self.mu = solve_itp(SOLVE_BOUND, f);
+
+        (perf, self.mu)
     }
 }
 
 /// An implementation of EloMMR algorithm.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EloMmr {
     rho: f64,
     beta: f64,
@@ -112,12 +122,14 @@ impl EloMmr {
 
     /// Update ratings according to the result of the provided contest.
     ///
-    /// If contest scores are empty, this function will do nothing.
+    /// If contest scores are empty, this function will return an empty Vec.
     ///
-    /// Return the lastest ratings of players.
-    pub fn update(&mut self, mut contest_scores: Vec<(i64, i64)>) {
+    /// Returns the partcipants' performance and rating.
+    ///
+    /// The returned tuple follows `(player_id, perf, rating)` order.
+    pub fn update(&self, mut contest_scores: Vec<(i64, i64)>) -> Vec<(i64, f64, f64)> {
         if contest_scores.is_empty() {
-            return;
+            return Vec::new();
         }
 
         // Calculate standings for internal use.
@@ -159,15 +171,22 @@ impl EloMmr {
             })
             .collect_into_vec(&mut player_datas);
 
-        standings.par_iter().for_each(|(id, lo, hi)| {
-            let mut player = self.players.get_mut(id).unwrap();
-            player.update(self.beta, &player_datas, (*lo, *hi));
-        });
+        let mut result = Vec::with_capacity(standings.len());
+        standings
+            .par_iter()
+            .map(|&(id, lo, hi)| {
+                let mut player = self.players.get_mut(&id).unwrap();
+                let (perf, rating) = player.update(self.beta, &player_datas, (lo, hi));
+                (id, perf, rating)
+            })
+            .collect_into_vec(&mut result);
+
+        result
     }
 
     /// Get all players' rating.
     ///
-    /// The returned tuple follows the order (player_id, rating).
+    /// The returned tuple follows `(player_id, rating)` order.
     pub fn get_ratings(&self) -> Vec<(i64, f64)> {
         self.players
             .par_iter()

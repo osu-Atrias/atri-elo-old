@@ -1,7 +1,7 @@
 use crate::solve_itp;
 
 #[test]
-fn solve_itp_tests() {
+fn solve_itp_test_1() {
     fn f(x: f64) -> f64 {
         x.powi(3) - x - 2.0
     }
