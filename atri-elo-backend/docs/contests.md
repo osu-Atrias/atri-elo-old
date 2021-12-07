@@ -549,6 +549,6 @@ api_key is provided but does not have permission.
 
 ### 404 Not Found
 
-There's no score with `contest_id` or `player_id`.
+There's no result with `contest_id` or `player_id`.
 
 If the contest is not calculated, this status code is also returned.
