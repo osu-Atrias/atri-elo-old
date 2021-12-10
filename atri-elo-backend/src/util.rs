@@ -1,6 +1,6 @@
-use flexbuffers::{FlexbufferSerializer, Reader};
-use serde::{Serialize, Deserialize};
 use color_eyre::eyre::Result;
+use flexbuffers::{FlexbufferSerializer, Reader};
+use serde::{Deserialize, Serialize};
 
 pub fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
     let mut s = FlexbufferSerializer::new();

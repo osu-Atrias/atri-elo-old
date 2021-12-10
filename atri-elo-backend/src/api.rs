@@ -1,4 +1,4 @@
-use axum::{extract::Query, routing::get, Router, http::StatusCode};
+use axum::{extract::Query, http::StatusCode, routing::get, Router};
 use oauth2::CsrfToken;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
@@ -13,8 +13,9 @@ pub static OAUTH_QUEUE: Lazy<Sender<OauthCallbackParam>> = Lazy::new(|| {
 });
 
 pub fn router() -> Router {
-    Router::new().route("/oauth/callback", get(oauth_callback))
-    .route("/oauth/verify", get(oauth_verify))
+    Router::new()
+        .route("/oauth/callback", get(oauth_callback))
+        .route("/oauth/verify", get(oauth_verify))
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -29,18 +30,16 @@ async fn oauth_callback(Query(param): Query<OauthCallbackParam>) -> StatusCode {
         Err(err) => {
             error!("no OAuth queue receiver: {}", err);
             StatusCode::INTERNAL_SERVER_ERROR
-        },
+        }
     }
 }
 
 async fn oauth_verify() -> (StatusCode, String) {
     match User::verify().await {
-        Ok((url, _)) => {
-            (StatusCode::OK, url.to_string())
-        },
+        Ok((url, _)) => (StatusCode::OK, url.to_string()),
         Err(err) => {
             error!("error when verifying: {}", err);
             (StatusCode::INTERNAL_SERVER_ERROR, "".to_string())
-        },
+        }
     }
 }
