@@ -49,7 +49,7 @@ impl Player {
         &mut self,
         beta: f64,
         player_data: &[(f64, f64)],
-        (lo, hi): (usize, usize),
+        (lo, hi): (u64, u64),
     ) -> (f64, f64) {
         // COEFF = PI / sqrt(3)
         const COEFF: f64 = 1.8137993642342178;
@@ -57,10 +57,10 @@ impl Player {
 
         let f = |x: f64| {
             let mut result = 0.0;
-            for &(delta, mu_pi) in player_data.iter().skip(lo - 1) {
+            for &(delta, mu_pi) in player_data.iter().skip(lo as usize - 1) {
                 result += delta.recip() * ((COEFF * (x - mu_pi) / (2.0 * delta)).tanh() - 1.0);
             }
-            for &(delta, mu_pi) in player_data.iter().take(hi) {
+            for &(delta, mu_pi) in player_data.iter().take(hi as usize) {
                 result += delta.recip() * ((COEFF * (x - mu_pi) / (2.0 * delta)).tanh() + 1.0);
             }
             result
@@ -96,7 +96,7 @@ pub struct EloMmr {
     mu_init: f64,
     sigma_init: f64,
 
-    players: DashMap<i64, Player>,
+    players: DashMap<u64, Player>,
 }
 
 impl Default for EloMmr {
@@ -127,7 +127,7 @@ impl EloMmr {
     /// Returns the partcipants' performance and rating.
     ///
     /// The returned tuple follows `(player_id, perf, rating)` order.
-    pub fn update(&self, mut contest_scores: Vec<(i64, i64)>) -> Vec<(i64, f64, f64)> {
+    pub fn update(&self, mut contest_scores: Vec<(u64, i64)>) -> Vec<(u64, f64, f64)> {
         if contest_scores.is_empty() {
             return Vec::new();
         }
@@ -136,8 +136,8 @@ impl EloMmr {
         let mut standings = Vec::new();
         let raw = &mut contest_scores;
         raw.par_sort_unstable_by_key(|v| -v.1);
-        let mut rank_app = 1;
-        let mut rank_int = 1;
+        let mut rank_app = 1u64;
+        let mut rank_int = 1u64;
         standings.push((raw[0].0, 1, 0));
         for (i, (id, score)) in raw.iter().enumerate().skip(1) {
             rank_int += 1;
@@ -187,7 +187,7 @@ impl EloMmr {
     /// Get all players' rating.
     ///
     /// The returned tuple follows `(player_id, rating)` order.
-    pub fn get_ratings(&self) -> Vec<(i64, f64)> {
+    pub fn get_ratings(&self) -> Vec<(u64, f64)> {
         self.players
             .par_iter()
             .map(|player| (*player.key(), player.mu))
@@ -195,14 +195,14 @@ impl EloMmr {
     }
 
     /// Get the rating of the specified player.
-    pub fn get_rating_of(&self, id: &i64) -> Option<f64> {
+    pub fn get_rating_of(&self, id: &u64) -> Option<f64> {
         self.players.get(id).map(|player| player.mu)
     }
 }
 
 /// Solve f(x) = 0 where x belongs to [a, b].
-///
-/// May return inaccurate solutions if y_a * y_b > 0.
+/// 
+/// Panics when `a < b` or `f(a) < 0 < f(b)` is not satisfied.
 fn solve_itp((mut a, mut b): (f64, f64), mut f: impl FnMut(f64) -> f64) -> f64 {
     const EPSILON: f64 = 1e-10;
     const N_0: usize = 1;
