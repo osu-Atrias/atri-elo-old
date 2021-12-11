@@ -31,6 +31,9 @@ config! {
         EXPIRE_TIME_FACTOR: u32 => 2,
     },
 
+
+    ADMIN_KEY: String,
+
     OSU_USER_API_ENDPOINT => "https://osu.ppy.sh/api/v2/me",
 }
 
