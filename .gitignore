@@ -1,5 +1,5 @@
 /target
-/atri-elo-backend/db
-/atri-elo-backend/.env
+/atri-elo-server/db
+/atri-elo-server/.env
 /db
 /Cargo.lock

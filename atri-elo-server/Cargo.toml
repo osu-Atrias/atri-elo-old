@@ -1,5 +1,5 @@
 [package]
-name = "atri-elo-backend"
+name = "atri-elo-server"
 version = "0.1.0"
 edition = "2021"
 

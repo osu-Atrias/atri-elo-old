@@ -263,6 +263,7 @@ pub struct Contest {
     close_time: OffsetDateTime,
     rank_time: OffsetDateTime,
 
+    scores: HashMap<u64, u64>,
     detail: HashMap<u64, ContestDetail>,
 }
 
