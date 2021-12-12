@@ -2,19 +2,16 @@ use std::collections::HashMap;
 
 use color_eyre::eyre::{eyre, Result};
 use oauth2::{
-    basic::BasicClient, reqwest::async_http_client, url::Url, AccessToken, AuthUrl,
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
-    RefreshToken, Scope, TokenResponse, TokenUrl,
+    basic::BasicClient, reqwest::async_http_client, AccessToken, AuthUrl, ClientId, ClientSecret,
+    RefreshToken, TokenResponse, TokenUrl,
 };
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sled::Db;
 use time::OffsetDateTime;
-use tokio::time::timeout;
-use tracing::info;
 
-use crate::{api::OAUTH_QUEUE, config, util::serialize};
+use crate::{config, util::{serialize ,deserialize}};
 
 pub static DATABASE: Lazy<Db> =
     Lazy::new(|| sled::open(config::database::NAME()).expect("couldn't open database"));
@@ -36,6 +33,7 @@ pub struct User {
     access_token: AccessToken,
     expires_in: OffsetDateTime,
     refresh_token: RefreshToken,
+    cookie_master_key: Vec<u8>,
 
     rating: f64,
     rank: u64,
@@ -43,92 +41,42 @@ pub struct User {
 }
 
 impl User {
-    pub async fn verify() -> Result<Url> {
-        let client = BasicClient::new(
-            ClientId::new(config::oauth::CLIENT_ID()),
-            Some(ClientSecret::new(config::oauth::CLIENT_SECRET())),
-            AuthUrl::new(config::oauth::AUTH_URL())?,
-            Some(TokenUrl::new(config::oauth::TOKEN_URL())?),
-        )
-        .set_redirect_uri(RedirectUrl::new(config::oauth::REDIRECT_URL())?);
+    pub fn new(
+        id: u64,
+        username: String,
+        access_token: AccessToken,
+        expires_in: OffsetDateTime,
+        refresh_token: RefreshToken,
+        cookie_master_key: Vec<u8>,
+    ) -> Self {
+        Self {
+            id,
+            username,
+            access_token,
+            expires_in,
+            refresh_token,
+            cookie_master_key,
+            rating: config::elo::MU_INIT(),
+            rank: 0,
+            history: HashMap::new(),
+        }
+    }
 
-        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    pub fn get(id: u64) -> Result<Option<User>> {
+        Ok(match DATABASE.open_tree("users")?.get(&id.to_be_bytes())? {
+            Some(buf) => {
+                Some(deserialize(&buf)?)
+            },
+            None => None,
+        })
+    }
 
-        let (auth_url, csrf_token) = client
-            .authorize_url(CsrfToken::new_random)
-            .add_scope(Scope::new("identify".to_string()))
-            .set_pkce_challenge(pkce_challenge)
-            .url();
+    pub fn save(&self) -> Result<()> {
+        let buf = serialize(&self)?;
 
-        tokio::spawn(async move {
-            let code = timeout(
-                tokio::time::Duration::from_secs(config::oauth::TIMEOUT()),
-                tokio::spawn(async move {
-                    let mut receiver = OAUTH_QUEUE.subscribe();
+        DATABASE.open_tree("users")?.insert(&self.id.to_be_bytes(), buf)?;
 
-                    Result::<_>::Ok(loop {
-                        let param = receiver.recv().await?;
-                        if param.state.secret() == csrf_token.secret() {
-                            break param.code;
-                        }
-                    })
-                }),
-            )
-            .await???;
-
-            let token_result = client
-                .exchange_code(AuthorizationCode::new(code))
-                .set_pkce_verifier(pkce_verifier)
-                .request_async(async_http_client)
-                .await?;
-
-            let res = reqwest::Client::new()
-                .get(config::OSU_USER_API_ENDPOINT())
-                .bearer_auth(token_result.access_token().secret())
-                .send()
-                .await?
-                .json::<Value>()
-                .await?;
-
-            let id = res
-                .get("id")
-                .ok_or_else(|| eyre!("id not presented in response"))?
-                .as_u64()
-                .ok_or_else(|| eyre!("id not representable by u64"))?;
-
-            let user = User {
-                id,
-                username: res
-                    .get("username")
-                    .ok_or_else(|| eyre!("username not presented in response"))?
-                    .as_str()
-                    .ok_or_else(|| eyre!("username not representable by &str"))?
-                    .to_string(),
-                access_token: token_result.access_token().clone(),
-                expires_in: OffsetDateTime::now_utc()
-                    + token_result
-                        .expires_in()
-                        .ok_or_else(|| eyre!("token expire time not presented in response"))?
-                        / config::oauth::EXPIRE_TIME_FACTOR(),
-                refresh_token: token_result
-                    .refresh_token()
-                    .ok_or_else(|| eyre!("refresh token not presented in response"))?
-                    .clone(),
-                rating: config::elo::MU_INIT(),
-                rank: 0,
-                history: HashMap::new(),
-            };
-
-            info!("user {}({}) authorized", user.username, user.id);
-
-            DATABASE
-                .open_tree("users")?
-                .insert(&id.to_be_bytes(), serialize(&user)?)?;
-
-            Result::<_>::Ok(id)
-        });
-
-        Ok(auth_url)
+        Ok(())
     }
 
     /// Get a reference to the user's id.
@@ -212,6 +160,16 @@ impl User {
     /// Get a mutable reference to the user's history.
     pub fn history_mut(&mut self) -> &mut HashMap<u64, PlayerHistory> {
         &mut self.history
+    }
+
+    /// Get a reference to the user's cookie master key.
+    pub fn cookie_master_key(&self) -> &[u8] {
+        self.cookie_master_key.as_ref()
+    }
+
+    /// Set the user's cookie master key.
+    pub fn set_cookie_master_key(&mut self, cookie_master_key: Vec<u8>) {
+        self.cookie_master_key = cookie_master_key;
     }
 }
 

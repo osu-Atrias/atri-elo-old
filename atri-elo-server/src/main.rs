@@ -1,12 +1,15 @@
-use api::router;
 use itconfig::config;
+use pages::router;
+use tower::ServiceBuilder;
+use tower_cookies::CookieManagerLayer;
+use tower_http::trace::TraceLayer;
 use tracing::Level;
 
 mod general;
 
 mod util;
 
-mod api;
+mod pages;
 
 config! {
     database {
@@ -32,7 +35,13 @@ config! {
     },
 
 
-    ADMIN_KEY: String,
+    admin {
+        KEY: String
+    },
+
+    frontend {
+        FONTAWESOME_KIT_CODE: String,
+    },
 
     OSU_USER_API_ENDPOINT => "https://osu.ppy.sh/api/v2/me",
 }
@@ -48,7 +57,14 @@ async fn main() {
         .init();
 
     axum::Server::bind(&"0.0.0.0:10818".parse().unwrap())
-        .serve(router().into_make_service())
+        .serve(
+            router()
+                .layer(
+                    ServiceBuilder::new()
+                        .layer(CookieManagerLayer::new()),
+                )
+                .into_make_service(),
+        )
         .await
         .unwrap();
 }
