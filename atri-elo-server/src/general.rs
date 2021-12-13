@@ -171,6 +171,21 @@ impl User {
     pub fn set_cookie_master_key(&mut self, cookie_master_key: Vec<u8>) {
         self.cookie_master_key = cookie_master_key;
     }
+
+    /// Set the user's access token.
+    pub fn set_access_token(&mut self, access_token: AccessToken) {
+        self.access_token = access_token;
+    }
+
+    /// Set the user's expires in.
+    pub fn set_expires_in(&mut self, expires_in: OffsetDateTime) {
+        self.expires_in = expires_in;
+    }
+
+    /// Set the user's refresh token.
+    pub fn set_refresh_token(&mut self, refresh_token: RefreshToken) {
+        self.refresh_token = refresh_token;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
