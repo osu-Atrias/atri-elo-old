@@ -11,7 +11,10 @@ use serde_json::Value;
 use sled::Db;
 use time::OffsetDateTime;
 
-use crate::{config, util::{serialize ,deserialize}};
+use crate::{
+    config,
+    util::{deserialize, serialize},
+};
 
 pub static DATABASE: Lazy<Db> =
     Lazy::new(|| sled::open(config::database::NAME()).expect("couldn't open database"));
@@ -64,9 +67,7 @@ impl User {
 
     pub fn get(id: u64) -> Result<Option<User>> {
         Ok(match DATABASE.open_tree("users")?.get(&id.to_be_bytes())? {
-            Some(buf) => {
-                Some(deserialize(&buf)?)
-            },
+            Some(buf) => Some(deserialize(&buf)?),
             None => None,
         })
     }
@@ -74,7 +75,9 @@ impl User {
     pub fn save(&self) -> Result<()> {
         let buf = serialize(&self)?;
 
-        DATABASE.open_tree("users")?.insert(&self.id.to_be_bytes(), buf)?;
+        DATABASE
+            .open_tree("users")?
+            .insert(&self.id.to_be_bytes(), buf)?;
 
         Ok(())
     }

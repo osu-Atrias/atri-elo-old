@@ -201,7 +201,7 @@ impl EloMmr {
 }
 
 /// Solve f(x) = 0 where x belongs to [a, b].
-/// 
+///
 /// Panics when `a < b` or `f(a) < 0 < f(b)` is not satisfied.
 fn solve_itp((mut a, mut b): (f64, f64), mut f: impl FnMut(f64) -> f64) -> f64 {
     const EPSILON: f64 = 1e-10;

@@ -2,7 +2,7 @@ use itconfig::config;
 use pages::router;
 use tower::ServiceBuilder;
 use tower_cookies::CookieManagerLayer;
-use tower_http::trace::TraceLayer;
+
 use tracing::Level;
 
 mod general;
@@ -59,10 +59,7 @@ async fn main() {
     axum::Server::bind(&"0.0.0.0:10818".parse().unwrap())
         .serve(
             router()
-                .layer(
-                    ServiceBuilder::new()
-                        .layer(CookieManagerLayer::new()),
-                )
+                .layer(ServiceBuilder::new().layer(CookieManagerLayer::new()))
                 .into_make_service(),
         )
         .await
