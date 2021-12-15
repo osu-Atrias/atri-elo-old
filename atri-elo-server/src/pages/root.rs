@@ -1,48 +1,16 @@
 use axum::{http::StatusCode, response::Html};
-use color_eyre::eyre::{eyre, Result};
-use cookie::{Cookie, Key};
+use color_eyre::eyre::Result;
 
 use maud::{html, DOCTYPE};
 
 use tower_cookies::Cookies;
 
-use crate::{general::User, pages::header};
+use crate::pages::header;
 
-use super::handle_error;
+use super::{handle_error, oauth::get_user_by_cookie};
 
 pub async fn root(cookies: Cookies) -> Result<Html<String>, StatusCode> {
-    let user = match cookies.get("id") {
-        Some(inner) => {
-            let parsed_id = inner.value().parse().map_err(handle_error)?;
-            let user = User::get(parsed_id).map_err(handle_error)?;
-            match user {
-                Some(user) => {
-                    let trusted_id: u64 = cookies
-                        .signed(&Key::from(user.cookie_master_key()))
-                        .get("trusted_id")
-                        .ok_or_else(|| eyre!("cookie verification failed"))
-                        .map_err(handle_error)?
-                        .value()
-                        .parse()
-                        .map_err(handle_error)?;
-
-                    if trusted_id == parsed_id {
-                        Some(user)
-                    } else {
-                        let mut removal_cookie = Cookie::named("id");
-                        removal_cookie.set_path("/");
-                        cookies.remove(removal_cookie);
-                        let mut removal_cookie = Cookie::named("trusted_id");
-                        removal_cookie.set_path("/");
-                        cookies.remove(removal_cookie);
-                        None
-                    }
-                }
-                None => None,
-            }
-        }
-        None => None,
-    };
+    let user = get_user_by_cookie(&cookies).map_err(handle_error)?;
 
     Ok(Html(
         html! {
@@ -65,9 +33,9 @@ pub async fn root(cookies: Cookies) -> Result<Html<String>, StatusCode> {
                         .navbar-item {
                             .buttons {
                                 @if let Some(user) = &user {
-                                    a .button.is-white href="/" {
+                                    a .button.is-white href="/user" {
                                         i .fas.fa-user {}
-                                        (user.username())
+                                        (&user.username)
                                     }
 
                                     a .button.is-white href="/oauth/logout" {

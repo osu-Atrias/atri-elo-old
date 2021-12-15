@@ -4,6 +4,7 @@ use axum::{http::StatusCode, routing::get, Router};
 use color_eyre::Report;
 
 use maud::{html, Markup};
+
 use tracing::error;
 
 use crate::config;
@@ -11,11 +12,14 @@ use crate::config;
 use self::{
     oauth::{oauth_callback, oauth_logout, oauth_verify},
     root::root,
+    user::{user, user_with_id}
 };
 
 mod oauth;
 
 mod root;
+
+mod user;
 
 pub fn router() -> Router {
     Router::new()
@@ -24,6 +28,8 @@ pub fn router() -> Router {
         .route("/oauth/callback", get(oauth_callback))
         .route("/oauth/verify", get(oauth_verify))
         .route("/oauth/logout", get(oauth_logout))
+        .route("/user", get(user))
+        .route("/user/:user_id", get(user_with_id))
 }
 
 fn handle_error(err: impl Into<Report> + Display) -> StatusCode {

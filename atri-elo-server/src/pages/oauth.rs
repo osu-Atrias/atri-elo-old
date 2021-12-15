@@ -19,16 +19,48 @@ use time::OffsetDateTime;
 use tower_cookies::Cookies;
 use tracing::info;
 
-use crate::{
-    config,
-    general::{User, DATABASE},
-    pages::header,
-    util::serialize,
-};
+use crate::{config, general::User, pages::header};
 
 use super::handle_error;
 
 pub static OAUTH_WAITING_QUEUE: Lazy<DashMap<String, PkceCodeVerifier>> = Lazy::new(DashMap::new);
+
+fn clear_cookies(cookies: &Cookies) {
+    let mut removal_cookie = Cookie::named("id");
+    removal_cookie.set_path("/");
+    cookies.remove(removal_cookie);
+    let mut removal_cookie = Cookie::named("trusted_id");
+    removal_cookie.set_path("/");
+    cookies.remove(removal_cookie);
+}
+
+pub fn get_user_by_cookie(cookies: &Cookies) -> Result<Option<User>> {
+    Ok(match cookies.get("id") {
+        Some(inner) => {
+            let parsed_id = inner.value().parse()?;
+            let user = User::get(parsed_id)?;
+            match user {
+                Some(user) => {
+                    let trusted_id: u64 = cookies
+                        .signed(&Key::from(&user.cookie_master_key))
+                        .get("trusted_id")
+                        .ok_or_else(|| eyre!("cookie verification failed"))?
+                        .value()
+                        .parse()?;
+
+                    if trusted_id == parsed_id {
+                        Some(user)
+                    } else {
+                        clear_cookies(cookies);
+                        None
+                    }
+                }
+                None => None,
+            }
+        }
+        None => None,
+    })
+}
 
 pub async fn oauth_verify() -> Result<Redirect, StatusCode> {
     let client = BasicClient::new(
@@ -105,65 +137,60 @@ pub async fn oauth_callback(
 
     let cookie_master_key = Key::generate();
 
-    if DATABASE
-        .open_tree("users")
-        .map_err(handle_error)?
-        .contains_key(&id.to_be_bytes())
-        .map_err(handle_error)?
-    {
-        let mut user = User::get(id).map_err(handle_error)?.unwrap();
-        user.set_access_token(token_result.access_token().clone());
-        user.set_expires_in(
-            OffsetDateTime::now_utc()
+    match User::get(id).map_err(handle_error)? {
+        Some(mut user) => {
+            user.access_token = token_result.access_token().clone();
+            user.expires_in = OffsetDateTime::now_utc()
                 + token_result
                     .expires_in()
                     .ok_or_else(|| eyre!("token expire time not presented in response"))
                     .map_err(handle_error)?
-                    / config::oauth::EXPIRE_TIME_FACTOR(),
-        );
-        user.set_refresh_token(
-            token_result
+                    / config::oauth::EXPIRE_TIME_FACTOR();
+            user.refresh_token = token_result
                 .refresh_token()
                 .ok_or_else(|| eyre!("refresh token not presented in response"))
                 .map_err(handle_error)?
-                .clone(),
-        );
-        user.set_cookie_master_key(cookie_master_key.master().to_vec());
-        user.save().map_err(handle_error)?;
-
-        info!("user {}({}) reauthorized", user.username(), user.id());
-    } else {
-        let user = User::new(
-            id,
-            res.get("username")
-                .ok_or_else(|| eyre!("username not presented in response"))
-                .map_err(handle_error)?
-                .as_str()
-                .ok_or_else(|| eyre!("username not representable by &str"))
-                .map_err(handle_error)?
-                .to_string(),
-            token_result.access_token().clone(),
-            OffsetDateTime::now_utc()
-                + token_result
-                    .expires_in()
-                    .ok_or_else(|| eyre!("token expire time not presented in response"))
+                .clone();
+            user.cookie_master_key = cookie_master_key.master().to_vec();
+            user.save().map_err(handle_error)?;
+            info!("user {}({}) reauthorized", user.username, user.id);
+        }
+        None => {
+            let user = User::new(
+                id,
+                res.get("username")
+                    .ok_or_else(|| eyre!("username not presented in response"))
                     .map_err(handle_error)?
-                    / config::oauth::EXPIRE_TIME_FACTOR(),
-            token_result
-                .refresh_token()
-                .ok_or_else(|| eyre!("refresh token not presented in response"))
-                .map_err(handle_error)?
-                .clone(),
-            cookie_master_key.master().to_vec(),
-        );
+                    .as_str()
+                    .ok_or_else(|| eyre!("username not representable by &str"))
+                    .map_err(handle_error)?
+                    .to_string(),
+                token_result.access_token().clone(),
+                OffsetDateTime::now_utc()
+                    + token_result
+                        .expires_in()
+                        .ok_or_else(|| eyre!("token expire time not presented in response"))
+                        .map_err(handle_error)?
+                        / config::oauth::EXPIRE_TIME_FACTOR(),
+                token_result
+                    .refresh_token()
+                    .ok_or_else(|| eyre!("refresh token not presented in response"))
+                    .map_err(handle_error)?
+                    .clone(),
+                cookie_master_key.master().to_vec(),
+                res.get("avatar_url")
+                    .ok_or_else(|| eyre!("username not presented in response"))
+                    .map_err(handle_error)?
+                    .as_str()
+                    .ok_or_else(|| eyre!("username not representable by &str"))
+                    .map_err(handle_error)?
+                    .to_string(),
+            );
 
-        info!("user {}({}) authorized", user.username(), user.id());
+            user.save().map_err(handle_error)?;
 
-        DATABASE
-            .open_tree("users")
-            .map_err(handle_error)?
-            .insert(&id.to_be_bytes(), serialize(&user).map_err(handle_error)?)
-            .map_err(handle_error)?;
+            info!("user {}({}) authorized", user.username, user.id);
+        }
     }
 
     cookies.add(
@@ -207,12 +234,7 @@ pub async fn oauth_callback(
 }
 
 pub async fn oauth_logout(cookies: Cookies) -> Html<String> {
-    let mut removal_cookie = Cookie::named("id");
-    removal_cookie.set_path("/");
-    cookies.remove(removal_cookie);
-    let mut removal_cookie = Cookie::named("trusted_id");
-    removal_cookie.set_path("/");
-    cookies.remove(removal_cookie);
+    clear_cookies(&cookies);
     Html(
         html! {
             (DOCTYPE)
